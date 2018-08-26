@@ -1,127 +1,118 @@
 require('dotenv').config();
 
 const util = require('util');
-const crypto = require('crypto');
 
-const express = require('express');
-const request = require('request-promise');
+const Twit = require('twit');
+const socketio = require("socket.io");
+const moment = require('moment');
 
-const twitter_oauth = {
+var T = new Twit({
 	consumer_key: process.env.API_KEY,
 	consumer_secret: process.env.API_SECRET,
-	token: process.env.OAUTH_ACCESS_TOKEN,
-	token_secret: process.env.OAUTH_SECRET
-};
-
-var app = express();
-
-/**
- * SETTING UP THE REQUIRED WEBHOOK
- */
-getBearerToken()
-	.then((result) => {
-		return getExistingWebhooks(result.token);
-	})
-	.then((result) => {
-		util.log(`Webhook id is ${result.id}.`)
-		return registerSubscriptions().then((body) => {
-			console.log(body);
-		});
-	})
-	.catch((err) => {
-		util.log(`Error during webhook registration: ${err.message}`);
-	});
-
-app.get("/webhook/twitter", function(req, resp) {
-	var crc_token = req.query.crc_token;
-
-	if (!crc_token) return resp.sendStatus(400);
-
-	let hmac = crypto.createHmac("sha256", process.env.API_SECRET).update(crc_token).digest("base64");
-
-	util.log(`Received CRC token ${crc_token} and calculated HMAC ${hmac}`);
-
-	resp.send({
-		response_token: `sha256=${hmac}`
-	});
+	access_token: process.env.OAUTH_ACCESS_TOKEN,
+	access_token_secret: process.env.OAUTH_SECRET
 });
 
-app.post("/webhook/twitter", express.json(), function(req, resp) {
-	console.log(req.body);
-	resp.end();
-});
+const io = socketio({ serveClient: false });
 
-app.listen(process.env.HTTP_PORT, process.env.HTTP_ADDRESS, () => {
-	util.log(`Webhook server is listening on ${process.env.HTTP_ADDRESS}:${process.env.HTTP_PORT}`);
-});
+var last_highest_tweet = null;
 
-function getBearerToken() {
-	let url = "https://api.twitter.com/oauth2/token";
+fetchNewTweets();
 
-	util.log("Retrieving Bearer token...");
+io.listen(process.env.HTTP_PORT);
+util.log(`socket.io server is listening on port ${process.env.HTTP_PORT}`);
 
-	return request.post({
-		url: url,
-		json: true,
-		headers: {
-			"Authorization": `Basic ${new Buffer(`${process.env.API_KEY}:${process.env.API_SECRET}`).toString("base64")}`
-		},
-		qs: { grant_type: "client_credentials" }
-	}).then((body) => {
-		if (body.errors) throw new Error(body.errors[0].message);
+io.on("connection", function(socket) {
+	var socket_ip = socket.handshake.headers["x-real-ip"]; //added by nginx reverse proxy
 
-		return { token: body.access_token };
+	if (socket.handshake.query.code != process.env.AUTH_CODE) {
+		util.log(`Incoming socket did not authenticate with a valid code (ip: ${socket_ip})`);
+		socket.disconnect(true);
+	} else {
+		util.log(`New socket authenticated successfully (ip: ${socket_ip})`);
+	}
+
+	io.to("statuschannel").emit("status", {
+		title: "New client connected",
+		text: `From IP ${socket_ip}`
 	});
-}
 
-function getExistingWebhooks(token) {
-	let url = `https://api.twitter.com/1.1/account_activity/all/${process.env.TWITTER_DEV_ENV}/webhooks.json`;
+	socket.join("statuschannel");
+});
 
-	util.log("Getting list of registered webhooks...");
+function fetchNewTweets() {
+	T.get("statuses/home_timeline", (last_highest_tweet != null) ? { since_id: last_highest_tweet } : undefined, function(err, data, resp) {
+		let now = moment();
+		let ratelimit_remaining = resp.headers["x-rate-limit-remaining"];
+		let ratelimit_reset = resp.headers["x-rate-limit-reset"];
+		var delay_ms = 60000;
 
-	return request.get({
-		url: url,
-		headers: {
-			"Authorization": `Bearer ${token}`
-		},
-		json: true
-	}).then((body) => {
-		if (body.length > 0) {
-			let valid = body[0].valid;
-			if (valid) {
-				util.log(`A webhook with id ${body[0].id} already exists which is also valid. Passing the id onwards...`);
-				return { id: body[0].id };
+		if (ratelimit_remaining != undefined && ratelimit_reset != undefined) {
+			let remaining = new Number(ratelimit_remaining);
+			let reset_date = moment.unix(ratelimit_reset);
+
+			if (remaining == 0) {
+				util.log(`Rate Limit exceeded. Trying again ${reset_date.fromNow()} (${reset_date.diff(now)}ms)`);
+
+				setTimeout(() => { fetchNewTweets() }, reset_date.diff(now));
 			} else {
-				util.log(`A webhook with id ${body[0].id} already exists which is NOT valid. Re-triggering the CRC...`);
-				return { id: body[0].id };
+				let next_reset = reset_date.diff(now);
+				delay_ms = Math.max(Math.ceil(next_reset / remaining), 20000);
+
+				util.log(`Set next request delay to ${delay_ms}`);
 			}
-		} else {
-			util.log('No valid webhook found. Registering new webhook...');
-			return registerWebhook().then((body) => {
-				util.log(`Registered new webhook with id ${body.id}.`);
-				return { id: body.id };
-			});
 		}
-	})
-}
 
-function registerWebhook() {
-	let url = `https://api.twitter.com/1.1/account_activity/all/${process.env.TWITTER_DEV_ENV}/webhooks.json`;
+		if (err) {
+			util.log(`Error while fetching timeline: ${err.message}`);
+			return setTimeout(() => { fetchNewTweets() }, delay_ms);
+		}
+		if (data.length == 0) return setTimeout(() => { fetchNewTweets() }, delay_ms);
 
-	return request.post({
-		url: url,
-		qs: { url: process.env.WEBHOOK_URL },
-		json: true,
-		oauth: twitter_oauth,
-	});
-}
+		let new_tweets = [];
 
-function registerSubscriptions() {
-	let url = `https://api.twitter.com/1.1/account_activity/all/${process.env.TWITTER_DEV_ENV}/subscriptions.json`;
+		//collect all new tweets in one array
+		for(let i in data) {
+			if (data[i].id == last_highest_tweet) break;
 
-	return request.post({
-		url: url,
-		oauth: twitter_oauth,
-		json: true,
+			let created_at = moment(data[i].created_at, 'dd MMM DD HH:mm:ss ZZ YYYY', 'en');
+
+			if (now.diff(created_at) > delay_ms) break; //delay_ms is not technically correct, since it is the current delay, not the delay of the last request, but w/e
+
+			new_tweets.push({
+				text: data[i].text,
+				created_at,
+				user: {
+					name: data[i].user.name,
+					screen_name: data[i].user.screen_name,
+					profile_image_url: data[i].user.profile_image_url,
+				}
+			});
+
+		}
+
+		last_highest_tweet = data[0].id;
+
+		if (new_tweets.length > 0) {
+			util.log(`Fetched ${new_tweets.length} new tweets`);
+
+			//loop through the array and schedule the sending of the tweets with their realtime distance in mind
+			//so we don't send out a huge batch of tweets once per minute
+
+			var last_tweet_time = new_tweets[new_tweets.length - 1].created_at.clone();
+
+			for(let i = new_tweets.length - 1; i >= 0; i--) {
+				setTimeout(() => {
+					new_tweets[i].created_at = new_tweets[i].created_at.valueOf();
+					io.emit("tweet", new_tweets[i]);
+
+					//console.log("emit tweet", new_tweets[i]);
+				}, new_tweets[i].created_at.diff(last_tweet_time));
+
+				last_tweet_time = new_tweets[i].created_at.clone();
+			}
+		}
+
+		return setTimeout(() => { fetchNewTweets() }, delay_ms);
 	});
 }
