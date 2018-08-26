@@ -56,9 +56,16 @@ function fetchNewTweets() {
 			let reset_date = moment.unix(ratelimit_reset);
 
 			if (remaining == 0) {
-				util.log(`Rate Limit exceeded. Trying again ${reset_date.fromNow()} (${reset_date.diff(now)}ms)`);
+				let time_to_reset = reset_date.diff(now);
 
-				setTimeout(() => { fetchNewTweets() }, reset_date.diff(now));
+				if (time_to_reset < 0) time_to_reset = 60000; //in case the reset time is in the past
+				delay_ms = time_to_reset;
+
+				if (err) {
+					util.log(`Rate Limit exceeded. Trying again ${reset_date.fromNow()} (${time_to_reset}ms)`);
+				} else {
+					util.log(`Set next request delay to ${delay_ms}`);
+				}
 			} else {
 				let next_reset = reset_date.diff(now);
 				delay_ms = Math.max(Math.ceil(next_reset / remaining), 20000);
