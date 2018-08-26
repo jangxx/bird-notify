@@ -1,0 +1,33 @@
+{
+  "name": "bird-notify",
+  "version": "1.0.0",
+  "description": "Proxies twitter stream of one user to connected desktop clients",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jangxx/bird-notify.git"
+  },
+  "keywords": [
+    "twitter",
+    "API",
+    "Account",
+    "Activity",
+    "Webhooks"
+  ],
+  "author": "jangxx",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jangxx/twat-notify/issues"
+  },
+  "homepage": "https://github.com/jangxx/twat-notify#readme",
+  "dependencies": {
+    "dotenv": "^6.0.0",
+    "express": "^4.16.3",
+    "request": "^2.88.0",
+    "request-promise": "^4.2.2",
+    "socket.io": "^2.1.1"
+  }
+}
