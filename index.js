@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const util = require('util');
+const http = require('http');
 
 const Twit = require('twit');
 const socketio = require("socket.io");
@@ -13,14 +14,17 @@ var T = new Twit({
 	access_token_secret: process.env.OAUTH_SECRET
 });
 
-const io = socketio({ serveClient: false });
+const server = http.createServer();
+const io = socketio(server, { serveClient: false });
 
 var last_highest_tweet = null;
 
 fetchNewTweets();
 
-io.listen(process.env.HTTP_PORT);
-util.log(`socket.io server is listening on port ${process.env.HTTP_PORT}`);
+server.listen(process.env.HTTP_PORT, process.env.HTTP_ADDRESS, () => {
+	let addr = server.address();
+	util.log(`socket.io server is listening on ${addr.address}:${addr.port}`);
+});
 
 io.on("connection", function(socket) {
 	var socket_ip = socket.handshake.headers["x-real-ip"]; //added by nginx reverse proxy
