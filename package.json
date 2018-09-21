@@ -20,9 +20,9 @@
   "author": "jangxx",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/jangxx/twat-notify/issues"
+    "url": "https://github.com/jangxx/bird-notify/issues"
   },
-  "homepage": "https://github.com/jangxx/twat-notify#readme",
+  "homepage": "https://github.com/jangxx/bird-notify#readme",
   "dependencies": {
     "dotenv": "^6.0.0",
     "moment": "^2.22.2",
