@@ -50,11 +50,11 @@ socket.on("tweet", (tweet) => {
  * tweet contains: 
  * {
  *   text: <content of the tweet>
- * 	 created_at: <millisecond timestamp>,
- * 	 user: {
- * 	   name: <username>,
- * 	   screen_name: <display name>,
- * 	   profile_image_url: <self explanatory>
+ *   created_at: <millisecond timestamp>,
+ *   user: {
+ *     name: <username>,
+ *     screen_name: <display name>,
+ *     profile_image_url: <self explanatory>
  *   }
  * }
  */
